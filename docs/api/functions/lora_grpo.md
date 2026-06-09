@@ -17,6 +17,7 @@ def lora_grpo(
     n_val: int = 500,
     # Custom rollout
     rollout_fn: Optional[Callable] = None,
+    trajectory_group_fn: Optional[Callable] = None,
     tasks: Optional[List[Any]] = None,
     reward_fn: Optional[Callable] = None,
     # GRPO hyperparameters
@@ -87,8 +88,9 @@ result = lora_grpo(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `rollout_fn` | `Callable` | `None` | Async function `(model, task) -> art.Trajectory`. Must be a top-level function (not lambda/closure). |
-| `tasks` | `list` | `None` | List of task objects passed to `rollout_fn` |
+| `rollout_fn` | `Callable` | `None` | Async function `(model, task) -> art.Trajectory`. Must be a top-level function (not lambda/closure). Mutually exclusive with `trajectory_group_fn`. |
+| `trajectory_group_fn` | `Callable` | `None` | Async function `(model, task, group_size) -> art.TrajectoryGroup`. Must be a top-level function (not lambda/closure). Mutually exclusive with `rollout_fn`. |
+| `tasks` | `list` | `None` | List of task objects passed to `rollout_fn` or `trajectory_group_fn` |
 | `reward_fn` | `Callable` | `None` | Custom reward function `(response, name, args) -> float` |
 
 ### GRPO Hyperparameters

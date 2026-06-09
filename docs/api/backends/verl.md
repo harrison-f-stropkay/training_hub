@@ -87,7 +87,7 @@ Each checkpoint contains `adapter_config.json` and `adapter_model.safetensors`, 
 - Requires Ray for distributed orchestration
 - Tool calls generated as text (not structured API), parsed via regex
 - `num_iterations` maps to epochs (full passes over the dataset), not random-sampling iterations
-- Custom `rollout_fn` not supported (verl manages its own rollout pipeline)
+- Custom `rollout_fn` / `trajectory_group_fn` not supported (verl manages its own rollout pipeline)
 
 ## See Also
 

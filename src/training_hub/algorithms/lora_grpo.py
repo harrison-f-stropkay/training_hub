@@ -659,7 +659,7 @@ class ARTLoRAGRPOBackend(Backend):
 
     The backend supports two modes:
     1. Built-in tool-call verification (data_path provided, no rollout_fn)
-    2. Custom rollout function (rollout_fn provided by user)
+    2. Custom rollout function (rollout_fn or trajectory_group_fn provided by user)
     """
 
     def execute_training(self, algorithm_params: Dict[str, Any]) -> Any:
@@ -757,6 +757,7 @@ class ARTLoRAGRPOBackend(Backend):
         max_lora_rank = params.get("max_lora_rank", None)
         # Custom rollout/reward
         rollout_fn = params.get("rollout_fn")
+        trajectory_group_fn = params.get("trajectory_group_fn")
         tasks = params.get("tasks")
         reward_fn = params.get("reward_fn")
 
@@ -791,11 +792,18 @@ class ARTLoRAGRPOBackend(Backend):
         art_project = wandb_project or params.get("art_project", "training-hub-grpo")
         art_path = params.get("art_path", os.path.join(ckpt_output_dir, ".art"))
 
+        if rollout_fn is not None and trajectory_group_fn is not None:
+            raise ValueError(
+                "Provide only one of 'rollout_fn' or 'trajectory_group_fn'. "
+                "'rollout_fn' returns one Trajectory; 'trajectory_group_fn' "
+                "returns one TrajectoryGroup."
+            )
+
         # Resolve mode: built-in tool-call vs custom rollout vs generic data
-        if rollout_fn is not None:
+        if rollout_fn is not None or trajectory_group_fn is not None:
             if tasks is None and data_path is None:
                 raise ValueError(
-                    "When using a custom rollout_fn, you must also provide 'tasks' "
+                    "When using a custom rollout_fn or trajectory_group_fn, you must also provide 'tasks' "
                     "or 'data_path' (a list of task objects to pass to your rollout function)."
                 )
             if tasks is not None:
@@ -899,6 +907,7 @@ class ARTLoRAGRPOBackend(Backend):
                 model, backend, art, train_data,
                 mode=mode,
                 rollout_fn=rollout_fn,
+                trajectory_group_fn=trajectory_group_fn,
                 reward_fn=reward_fn,
                 num_iterations=num_iterations,
                 group_size=group_size,
@@ -935,7 +944,7 @@ class ARTLoRAGRPOBackend(Backend):
 
     async def _run_training_loop(
         self, model, backend, art, train_data, *,
-        mode, rollout_fn, reward_fn,
+        mode, rollout_fn, trajectory_group_fn, reward_fn,
         num_iterations, group_size, prompt_batch_size,
         learning_rate, temperature, max_tokens, concurrency,
         ckpt_output_dir, art_path, art_project, art_model_name, model_path, lora_r, lora_alpha,
@@ -994,6 +1003,14 @@ class ARTLoRAGRPOBackend(Backend):
                     return await rollout_fn(mdl, task)
             effective_rollout = _wrapped_rollout
 
+            async def _wrapped_trajectory_group(mdl, task):
+                async with sem:
+                    group = await trajectory_group_fn(mdl, task, group_size)
+                    # ART's group wrapper can be awaitable, so gather it
+                    if hasattr(group, "__await__"):
+                        group = await group
+                    return group
+
         # Check for resume
         current_step = await model.get_step()
         start_iteration = current_step if current_step > 0 else 0
@@ -1024,13 +1041,21 @@ class ARTLoRAGRPOBackend(Backend):
             iter_samples = random.sample(train_data, n_tasks)
 
             # Gather trajectory groups
-            train_groups = await art.gather_trajectory_groups(
-                (
+            if trajectory_group_fn is not None:
+                trajectory_groups = (
+                    _wrapped_trajectory_group(model, sample)
+                    for sample in iter_samples
+                )
+            else:
+                trajectory_groups = (
                     art.TrajectoryGroup(
                         effective_rollout(model, sample) for _ in range(group_size)
                     )
                     for sample in iter_samples
-                ),
+                )
+
+            train_groups = await art.gather_trajectory_groups(
+                trajectory_groups,
                 pbar_desc=f"Iter {iteration + 1}/{num_iterations}",
             )
 
@@ -1273,6 +1298,7 @@ class LoRAGRPOAlgorithm(Algorithm):
         n_val: Optional[int] = None,
         # Custom rollout mode
         rollout_fn: Optional[Callable] = None,
+        trajectory_group_fn: Optional[Callable] = None,
         tasks: Optional[List[Any]] = None,
         reward_fn: Optional[Callable] = None,
         # GRPO hyperparameters
@@ -1322,7 +1348,9 @@ class LoRAGRPOAlgorithm(Algorithm):
         2. Custom rollout (provide rollout_fn + tasks):
            User supplies an async rollout function and task list. The rollout
            function receives (model, task) and returns an art.Trajectory with
-           reward set. Supports both single-turn and multi-turn traces.
+           reward set. For coordinated rollouts, provide trajectory_group_fn to
+           return a full art.TrajectoryGroup. Supports both single-turn and
+           multi-turn traces.
 
         Args:
             model_path: HuggingFace model ID or local path to base model.
@@ -1338,8 +1366,11 @@ class LoRAGRPOAlgorithm(Algorithm):
                 rollout_fn: Async function (model, task) -> art.Trajectory.
                     The returned trajectory must have .reward set.
                     Must be a top-level function (not a lambda or closure),
-                    as it is serialized to a subprocess via pickle.
-                tasks: List of task objects passed to rollout_fn.
+                    as it is serialized to a subprocess via pickle. Mutually exclusive with trajectory_group_fn.
+                trajectory_group_fn: Async function (model, task, group_size) ->
+                    art.TrajectoryGroup. Each returned trajectory in the group
+                    must have .reward set. Mutually exclusive with rollout_fn.
+                tasks: List of task objects passed to rollout_fn or trajectory_group_fn.
                 reward_fn: Optional reward function to override the default
                     tool_call_reward. Signature: (response, expected_name, expected_args) -> float.
 
@@ -1393,6 +1424,7 @@ class LoRAGRPOAlgorithm(Algorithm):
             "n_train": n_train,
             "n_val": n_val,
             "rollout_fn": rollout_fn,
+            "trajectory_group_fn": trajectory_group_fn,
             "tasks": tasks,
             "reward_fn": reward_fn,
             "num_iterations": num_iterations,
@@ -1447,6 +1479,7 @@ class LoRAGRPOAlgorithm(Algorithm):
             "n_val": int,
             # Custom rollout
             "rollout_fn": Callable,
+            "trajectory_group_fn": Callable,
             "tasks": list,
             "reward_fn": Callable,
             # GRPO hyperparameters
@@ -1507,6 +1540,7 @@ def lora_grpo(
     n_val: int = 500,
     # Custom rollout mode
     rollout_fn: Optional[Callable] = None,
+    trajectory_group_fn: Optional[Callable] = None,
     tasks: Optional[List[Any]] = None,
     reward_fn: Optional[Callable] = None,
     # GRPO hyperparameters
@@ -1555,7 +1589,9 @@ def lora_grpo(
 
     2. Custom rollout (provide rollout_fn + tasks):
        User supplies an async rollout function for arbitrary environments.
-       Supports both single-turn and multi-turn agentic traces.
+       Provide trajectory_group_fn instead to return a full TrajectoryGroup
+       when rollouts need shared coordination. Supports both single-turn and
+       multi-turn agentic traces.
 
     Args:
         model_path: HuggingFace model ID or local path (e.g., 'Qwen/Qwen3-4B').
@@ -1569,7 +1605,13 @@ def lora_grpo(
 
         rollout_fn: Async function with signature (model, task) -> art.Trajectory.
             The returned Trajectory must have .reward set.
-        tasks: List of task objects passed to rollout_fn each iteration.
+            Mutually exclusive with trajectory_group_fn.
+        trajectory_group_fn: Async function with signature
+            (model, task, group_size) -> art.TrajectoryGroup.
+            Each returned trajectory in the group must have .reward set.
+            Mutually exclusive with rollout_fn.
+        tasks: List of task objects passed to rollout_fn or trajectory_group_fn
+            each iteration.
         reward_fn: Custom reward function for built-in tool-call mode.
             Signature: (response, expected_name, expected_args) -> float.
 
@@ -1672,6 +1714,7 @@ def lora_grpo(
         n_train=n_train,
         n_val=n_val,
         rollout_fn=rollout_fn,
+        trajectory_group_fn=trajectory_group_fn,
         tasks=tasks,
         reward_fn=reward_fn,
         num_iterations=num_iterations,
@@ -1806,7 +1849,7 @@ def grpo(
         )
     """
     _unsupported = {
-        "backend", "rollout_fn", "tasks", "concurrency",
+        "backend", "rollout_fn", "trajectory_group_fn", "tasks", "concurrency",
         "lora_r", "lora_alpha", "target_modules", "max_lora_rank", "max_grad_norm",
     } & kwargs.keys()
     if _unsupported:

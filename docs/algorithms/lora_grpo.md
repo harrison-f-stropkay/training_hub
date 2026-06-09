@@ -184,6 +184,8 @@ result = lora_grpo(
 
 > **Note:** Custom `rollout_fn` must be a top-level function (not a lambda or closure) due to subprocess pickling.
 
+For coordinated rollouts, provide `trajectory_group_fn` instead of `rollout_fn` to return a full `art.TrajectoryGroup` for each task.
+
 ## Performance Tips
 
 1. **Start with a small test** — Use `num_iterations=2, prompt_batch_size=10` to verify the pipeline works before long runs

@@ -20,7 +20,7 @@ The ART backend runs LoRA + GRPO training on a single GPU using [OpenPipe ART](h
 - Structured tool-call generation via OpenAI-compatible API
 - Built-in tool-call reward verification (`tool_call_reward`)
 - Automatic checkpoint saving and resume
-- Support for custom rollout functions and reward functions
+- Support for custom rollout, trajectory-group, and reward functions
 - Weights & Biases experiment tracking (auto-detects `WANDB_API_KEY`)
 
 ## Usage

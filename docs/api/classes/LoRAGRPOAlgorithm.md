@@ -17,7 +17,7 @@ class LoRAGRPOAlgorithm(Algorithm):
 `LoRAGRPOAlgorithm` implements the GRPO training loop for tool-calling agents with LoRA parameter-efficient training. It supports two modes:
 
 1. **Built-in tool-call verification** — Provide a dataset with tool-call traces, and the algorithm handles rollout generation, reward computation, and training automatically.
-2. **Custom rollout** — Provide your own async rollout function for arbitrary environments.
+2. **Custom rollout** — Provide your own async rollout or trajectory-group function for arbitrary environments.
 
 ## Backends
 

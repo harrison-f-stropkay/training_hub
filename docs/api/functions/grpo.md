@@ -96,7 +96,7 @@ result = grpo(
 
 - No `lora_r`, `lora_alpha`, `target_modules`, `max_lora_rank` parameters
 - No `backend` parameter (always `"verl"`)
-- No `rollout_fn`, `tasks`, `concurrency` (custom rollout is ART-only)
+- No `rollout_fn`, `trajectory_group_fn`, `tasks`, `concurrency` (custom rollout is ART-only)
 - Produces full model checkpoints (~16GB for 8B) instead of LoRA adapters (~1-2GB)
 - Requires `python -m verl.model_merger merge` to consolidate FSDP checkpoints
 
